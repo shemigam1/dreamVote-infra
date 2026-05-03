@@ -1,0 +1,74 @@
+# ============================================================================
+# OS metadata
+# ============================================================================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ============================================================================
+# IDEs / editors
+# Personal preferences - each developer configures their own.
+# ============================================================================
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+*.swp
+*.swo
+*~
+
+# ============================================================================
+# Java / Maven (server/)
+# ============================================================================
+# Build output. `target/` matches anywhere in the tree, including any stray
+# `target/` at the repo root from running mvn outside the server/ dir.
+target/
+*.class
+*.jar
+*.war
+*.ear
+*.nar
+hs_err_pid*
+replay_pid*
+
+# ============================================================================
+# Node / pnpm / Vite (ui/)
+# ============================================================================
+node_modules/
+dist/
+dist-ssr/
+build/
+.vite/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# ============================================================================
+# Environment files
+# CRITICAL: never commit secrets. .env.example and .env.development are
+# explicitly NOT ignored - they're documentation/dev defaults with no secrets.
+# ============================================================================
+.env
+.env.local
+.env.*.local
+!.env.example
+!.env.development
+
+# ============================================================================
+# Coverage / test output
+# ============================================================================
+coverage/
+*.lcov
+.nyc_output/
+
+# ============================================================================
+# Misc
+# ============================================================================
+*.tmp
+*.bak
