@@ -1,33 +1,34 @@
-# Build and push container images to GHCR on every push to main.
+# Tests, then builds and pushes container images to GHCR on push to main.
 #
-# Two parallel build jobs (server and ui), each gated by a path-filter so we
-# only rebuild what changed. Both produce two tags per image:
+#   1. `changes`        - detect whether server/ui actually changed
+#   2. `test-server`    - run Spring Boot tests against a Mongo service (gates server image build)
+#   3. `build-server`   - build & push to ghcr.io/.../dreamvote-server (depends on test-server)
+#   4. `build-ui`       - build & push to ghcr.io/.../dreamvote-ui (parallel; no tests yet)
+#
+# Image tags per push:
 #   :sha-<short>  -- immutable; pin this from your prod overlay
-#   :latest       -- mutable; convenient for local "docker pull" experiments,
-#                    NEVER reference from a production manifest
+#   :latest       -- mutable; convenient for local "docker pull", NEVER from a prod manifest
 #
-# Manual trigger is also enabled via workflow_dispatch (Actions tab -> Run).
+# Triggers:
+#   - push to main (full pipeline)
+#   - pull_request (tests run; image push job has its own permissions check
+#     and won't push from forked PRs because the GITHUB_TOKEN is read-only there)
+#   - workflow_dispatch (manual run from the Actions tab)
 
 name: CI
 
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
-  # Lowercased - GHCR image names are case-insensitive but the path must
-  # match exactly when pulling.
   OWNER: shemigam1
 
 jobs:
   # ----- Detect what changed --------------------------------------------------
-  # Runs first; downstream build jobs gate on its outputs. This avoids
-  # rebuilding the server image when only ui code changed (and vice versa).
-  # The workflow file itself is in both filters so that any CI tweak triggers
-  # a full build of both images - guarantees you can't accidentally ship a
-  # workflow change that breaks one of the builds without noticing.
   changes:
     runs-on: ubuntu-latest
     outputs:
@@ -47,20 +48,56 @@ jobs:
               - 'ui/**'
               - '.github/workflows/ci.yml'
 
-  # ----- Server image ---------------------------------------------------------
-  build-server:
+  # ----- Run Spring Boot tests -----------------------------------------------
+  # Boots the full Spring context (@SpringBootTest), which means it needs a
+  # real Mongo. GitHub Actions `services:` block runs one in a sidecar
+  # container exposed on localhost:27017 - exactly what application.properties'
+  # default URI expects, no env var needed.
+  test-server:
     needs: changes
     if: needs.changes.outputs.server == 'true'
     runs-on: ubuntu-latest
+    services:
+      mongo:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        # The runner waits for `--health-cmd` to succeed before starting the
+        # job's steps, so we don't need to add a manual wait-loop.
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ping:1}).ok'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 25
+          # Caches ~/.m2 across runs keyed on pom.xml hash. First run downloads
+          # everything (slow); subsequent runs reuse - typically 30s vs 3min.
+          cache: maven
+
+      - name: Run tests
+        working-directory: server
+        run: ./mvnw -B -e -ntp verify
+
+  # ----- Server image ---------------------------------------------------------
+  build-server:
+    # Wait for tests AND the changes job. The `if:` is on `changes.outputs`
+    # because GHA evaluates `needs:` results before evaluating `if`.
+    needs: [changes, test-server]
+    if: needs.changes.outputs.server == 'true'
+    runs-on: ubuntu-latest
     permissions:
-      # Default GITHUB_TOKEN can only READ packages. We need WRITE to push.
       contents: read
       packages: write
     steps:
       - uses: actions/checkout@v4
 
-      # buildx is the modern Docker builder; required for the GHA cache backend
-      # used below and for multi-platform builds if we ever enable them.
       - uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
@@ -70,9 +107,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Computes the tag list for this build (sha-<short> + latest on main),
-      # plus standard OCI labels (org.opencontainers.image.*) describing the
-      # source commit, build time, etc.
       - name: Compute image metadata
         id: meta
         uses: docker/metadata-action@v5
@@ -86,16 +120,12 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: ./server
-          # Single platform - GHA runners are amd64. EKS x86 nodes consume
-          # this directly. To also target Minikube on Apple Silicon, switch to:
-          #   platforms: linux/amd64,linux/arm64
-          # Cost: roughly 2x build time.
-          push: true
+          # Skip pushing on pull_request events - GITHUB_TOKEN is read-only
+          # for forks, and even for branch PRs it's good hygiene to only
+          # publish from main.
+          push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # GHA cache lets Docker layer caching work across runs without us
-          # managing storage. mode=max caches intermediate layers too (more
-          # cache, more reuse).
           cache-from: type=gha,scope=server
           cache-to: type=gha,scope=server,mode=max
 
@@ -132,9 +162,8 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: ./ui
-          push: true
+          push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # Separate cache scope so server/ui caches don't evict each other.
           cache-from: type=gha,scope=ui
           cache-to: type=gha,scope=ui,mode=max
