@@ -1,4 +1,140 @@
-name: ci.yml
+# Build and push container images to GHCR on every push to main.
+#
+# Two parallel build jobs (server and ui), each gated by a path-filter so we
+# only rebuild what changed. Both produce two tags per image:
+#   :sha-<short>  -- immutable; pin this from your prod overlay
+#   :latest       -- mutable; convenient for local "docker pull" experiments,
+#                    NEVER reference from a production manifest
+#
+# Manual trigger is also enabled via workflow_dispatch (Actions tab -> Run).
+
+name: CI
+
 on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  # Lowercased - GHCR image names are case-insensitive but the path must
+  # match exactly when pulling.
+  OWNER: shemigam1
 
 jobs:
+  # ----- Detect what changed --------------------------------------------------
+  # Runs first; downstream build jobs gate on its outputs. This avoids
+  # rebuilding the server image when only ui code changed (and vice versa).
+  # The workflow file itself is in both filters so that any CI tweak triggers
+  # a full build of both images - guarantees you can't accidentally ship a
+  # workflow change that breaks one of the builds without noticing.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      server: ${{ steps.filter.outputs.server }}
+      ui: ${{ steps.filter.outputs.ui }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            server:
+              - 'server/**'
+              - '.github/workflows/ci.yml'
+            ui:
+              - 'ui/**'
+              - '.github/workflows/ci.yml'
+
+  # ----- Server image ---------------------------------------------------------
+  build-server:
+    needs: changes
+    if: needs.changes.outputs.server == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      # Default GITHUB_TOKEN can only READ packages. We need WRITE to push.
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # buildx is the modern Docker builder; required for the GHA cache backend
+      # used below and for multi-platform builds if we ever enable them.
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Computes the tag list for this build (sha-<short> + latest on main),
+      # plus standard OCI labels (org.opencontainers.image.*) describing the
+      # source commit, build time, etc.
+      - name: Compute image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.OWNER }}/dreamvote-server
+          tags: |
+            type=sha,prefix=sha-,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ./server
+          # Single platform - GHA runners are amd64. EKS x86 nodes consume
+          # this directly. To also target Minikube on Apple Silicon, switch to:
+          #   platforms: linux/amd64,linux/arm64
+          # Cost: roughly 2x build time.
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # GHA cache lets Docker layer caching work across runs without us
+          # managing storage. mode=max caches intermediate layers too (more
+          # cache, more reuse).
+          cache-from: type=gha,scope=server
+          cache-to: type=gha,scope=server,mode=max
+
+  # ----- UI image -------------------------------------------------------------
+  build-ui:
+    needs: changes
+    if: needs.changes.outputs.ui == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.OWNER }}/dreamvote-ui
+          tags: |
+            type=sha,prefix=sha-,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ./ui
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Separate cache scope so server/ui caches don't evict each other.
+          cache-from: type=gha,scope=ui
+          cache-to: type=gha,scope=ui,mode=max
