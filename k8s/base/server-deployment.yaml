@@ -1,0 +1,109 @@
+# Deployment for the Spring Boot API.
+#
+# Why Deployment (and not StatefulSet) for the server?
+#   - It's stateless. Restarting any pod is fine; they're interchangeable.
+#   - We don't need stable per-pod identity or per-pod storage.
+#   - Deployments roll out updates in a controlled way (RollingUpdate by
+#     default): bring up new pods, wait for them to be Ready, then kill
+#     the old ones. Zero-downtime as long as readinessProbe is honest.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: server
+  namespace: dreamvote
+  labels:
+    app.kubernetes.io/name: server
+    app.kubernetes.io/component: api
+    app.kubernetes.io/part-of: dreamvote
+spec:
+  # 1 replica in base. Overlays can override this (e.g. 2 in prod).
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: server
+
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: server
+        app.kubernetes.io/component: api
+        app.kubernetes.io/part-of: dreamvote
+    spec:
+      # K8s auto-injects env vars for every Service in the namespace, named
+      # like SERVER_SERVICE_HOST, SERVER_SERVICE_PORT, and SERVER_PORT (the
+      # last one being "tcp://IP:PORT"). Spring Boot's relaxed binding maps
+      # SERVER_PORT to the property server.port and tries to parse the URI
+      # as an integer - boot fails with "Invalid value 'tcp://...'". This
+      # is a vestigial Docker-link compat feature; we use DNS exclusively
+      # (mongo:27017, server:8080), so disabling is safe and removes the
+      # whole class of collision bugs.
+      enableServiceLinks: false
+
+      # Defense-in-depth: the Dockerfile already sets USER spring (uid 1001),
+      # but declaring it here too ensures K8s rejects the pod if the image is
+      # ever swapped for one that runs as root.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+
+      containers:
+        - name: server
+          # IfNotPresent: K8s uses the local image if present, otherwise
+          # pulls. For Minikube workflow we'll build directly into Minikube's
+          # docker daemon (`eval $(minikube docker-env)`), so the image is
+          # local and no pull happens.
+          # An overlay for prod would pin a digest like ghcr.io/.../server@sha256:...
+          # and use Always to ensure rollouts always re-pull.
+          image: dreamvote-server:dev
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - name: http
+              containerPort: 8080
+
+          # Pull every key from server-config (ConfigMap) and server-secret
+          # (Secret) as env vars. SPRING_PROFILES_ACTIVE and SPRING_MONGODB_URI
+          # come from the ConfigMap; nothing comes from the Secret yet but the
+          # reference is in place for when secrets get added.
+          envFrom:
+            - configMapRef:
+                name: server-config
+            - secretRef:
+                name: server-secret
+
+          # Liveness: /actuator/health/liveness reports DOWN only if Spring's
+          # internal LivenessState is broken (rare). If this fails, K8s
+          # restarts the container.
+          # Readiness: /actuator/health/readiness reports DOWN if dependencies
+          # (Mongo) are unreachable. If it fails, K8s removes the pod from
+          # Service endpoints - clients won't be sent here, but the container
+          # keeps running (Mongo might recover).
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            initialDelaySeconds: 30   # Spring Boot boot takes ~5-15s; pad for safety
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          # JVM apps benefit from generous memory headroom. 512Mi request +
+          # 1Gi limit covers Spring Boot's startup heap plus some breathing
+          # room. CPU 100m is fine for low traffic; the limit lets it burst.
+          resources:
+            requests:
+              cpu: 100m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi

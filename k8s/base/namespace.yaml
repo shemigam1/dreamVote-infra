@@ -1,0 +1,7 @@
+# Dedicated namespace keeps all dreamVote resources isolated from other apps
+# in the cluster. In production this is non-negotiable; in Minikube it just
+# keeps `kubectl get all` output manageable while you learn.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dreamvote

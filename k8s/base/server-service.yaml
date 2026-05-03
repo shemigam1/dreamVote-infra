@@ -1,0 +1,29 @@
+# ClusterIP Service for the Spring Boot API.
+#
+# Default service type. Gets a virtual IP inside the cluster and DNS entry
+# `server.dreamvote.svc.cluster.local` (or just `server` from inside the
+# same namespace). Load-balances over all pods matching the selector.
+#
+# Not exposed to the outside world - the UI's nginx proxies /api/* here
+# from inside the cluster, and external traffic only hits the Ingress in
+# front of the UI Service.
+apiVersion: v1
+kind: Service
+metadata:
+  name: server
+  namespace: dreamvote
+  labels:
+    app.kubernetes.io/name: server
+    app.kubernetes.io/component: api
+    app.kubernetes.io/part-of: dreamvote
+spec:
+  # Default; included for clarity. Possible types are ClusterIP (in-cluster
+  # only), NodePort (also exposes on every node's IP at a high port),
+  # LoadBalancer (cloud-provided external LB), and ExternalName (DNS alias).
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: server
+  ports:
+    - name: http
+      port: 8080         # the port the Service exposes
+      targetPort: http   # references the named container port; safer than re-stating "8080"

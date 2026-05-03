@@ -1,0 +1,83 @@
+# Deployment for the React SPA + nginx.
+#
+# Stateless like the server: every pod serves the same baked-in bundle and
+# proxies API calls. No PVC, no per-pod identity needed.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ui
+  namespace: dreamvote
+  labels:
+    app.kubernetes.io/name: ui
+    app.kubernetes.io/component: web
+    app.kubernetes.io/part-of: dreamvote
+spec:
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ui
+
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ui
+        app.kubernetes.io/component: web
+        app.kubernetes.io/part-of: dreamvote
+    spec:
+      # nginx-unprivileged image runs as user "nginx" (uid 101). Asserting
+      # the same here means K8s will reject the pod if the image is ever
+      # swapped for one expecting root.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+
+      containers:
+        - name: ui
+          image: dreamvote-ui:dev
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - name: http
+              containerPort: 8080
+
+          # Pulls VITE_APP_BASE_URL=/api from the ConfigMap. This env var
+          # is consumed by docker-entrypoint.sh at container startup, which
+          # sed-replaces __VITE_APP_BASE_URL__ in the bundled JS files.
+          # No Secret reference - the UI has no secrets.
+          envFrom:
+            - configMapRef:
+                name: ui-config
+
+          # nginx is fast to start and the /healthz location is cheap, so
+          # we use the same endpoint for liveness and readiness with tight
+          # timing. nginx that fails to respond on /healthz is genuinely
+          # broken - restart is the right action.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+
+          # Tiny - nginx serving static files plus the runtime substitution
+          # script. Memory request 64Mi covers the nginx workers; CPU 50m
+          # is fine for low traffic.
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi

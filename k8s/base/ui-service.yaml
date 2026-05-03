@@ -1,0 +1,21 @@
+# ClusterIP Service for the UI (nginx serving the SPA bundle).
+#
+# Lives in front of the ui Deployment. The Ingress (K6) routes external
+# traffic to this Service; nothing else in the cluster needs to call it.
+apiVersion: v1
+kind: Service
+metadata:
+  name: ui
+  namespace: dreamvote
+  labels:
+    app.kubernetes.io/name: ui
+    app.kubernetes.io/component: web
+    app.kubernetes.io/part-of: dreamvote
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: ui
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

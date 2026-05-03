@@ -1,0 +1,133 @@
+# StatefulSet for MongoDB.
+#
+# Why StatefulSet and not Deployment?
+#   - Stable network identity: pods are named mongo-0, mongo-1, ... and
+#     keep those names across restarts. A Deployment would give random
+#     pod names that change on each rollout.
+#   - Stable storage: volumeClaimTemplates auto-creates one PersistentVolumeClaim
+#     per pod, and that PVC follows the pod through restarts. A Deployment
+#     can mount a PVC, but every replica would share it.
+#   - Ordered, graceful operations: pods start one-at-a-time (mongo-0 must
+#     be ready before mongo-1 starts), and they shut down in reverse order.
+#     Critical for replica sets, harmless for our single-replica case.
+#
+# REMINDER: running stateful databases in Kubernetes is a learning exercise.
+# For production use Atlas, DocumentDB, or another managed service. The
+# operational burden of self-managed databases on K8s is real.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mongo
+  namespace: dreamvote
+  labels:
+    app.kubernetes.io/name: mongo
+    app.kubernetes.io/component: database
+    app.kubernetes.io/part-of: dreamvote
+spec:
+  # Required: must point at the headless Service. Lets each pod get its own
+  # DNS entry (mongo-0.mongo, mongo-1.mongo, ...).
+  serviceName: mongo
+
+  # One replica is enough for learning. To do real Mongo HA you'd run 3
+  # replicas configured as a replica set, with init containers to bootstrap
+  # rs.initiate(). Out of scope here.
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mongo
+
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mongo
+        app.kubernetes.io/component: database
+        app.kubernetes.io/part-of: dreamvote
+    spec:
+      # securityContext at the pod level applies to ALL containers + the
+      # mounted volume. fsGroup is the magic bit: K8s chowns the mounted
+      # PVC to this gid before the container starts, so a non-root mongo
+      # process can write to /data/db.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999       # mongodb user inside the official image
+        runAsGroup: 999
+        fsGroup: 999
+
+      containers:
+        - name: mongo
+          image: mongo:7
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: mongo
+              containerPort: 27017
+
+          # Liveness: "is the mongod process responsive at all?" If this
+          # fails repeatedly K8s restarts the container.
+          # Readiness: "is mongod ready to accept queries?" If this fails
+          # K8s removes the pod from Service endpoints (clients won't get
+          # routed to it) but doesn't restart it.
+          # For a single Mongo node both checks are basically the same -
+          # we use the same `ping` command, just with different timing.
+          livenessProbe:
+            exec:
+              command:
+                - mongosh
+                - --quiet
+                - --eval
+                - db.adminCommand('ping').ok
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          readinessProbe:
+            exec:
+              command:
+                - mongosh
+                - --quiet
+                - --eval
+                - db.adminCommand('ping').ok
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          # Conservative resources. Real Mongo wants more, but for a single
+          # learning replica these caps are plenty and prevent it from eating
+          # the whole Minikube node.
+          resources:
+            requests:
+              cpu: 100m       # 0.1 CPU
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+
+          volumeMounts:
+            # Mounts the per-pod PVC (created by volumeClaimTemplates below)
+            # at the path Mongo expects its data files.
+            - name: data
+              mountPath: /data/db
+
+  # volumeClaimTemplates is the StatefulSet superpower. K8s creates one
+  # PersistentVolumeClaim PER POD with a deterministic name like
+  # `data-mongo-0`. The PVC is bound to a PersistentVolume by the cluster's
+  # default StorageClass (Minikube ships with a hostPath-backed one).
+  #
+  # Critical property: the PVC SURVIVES pod deletion. Delete mongo-0, K8s
+  # creates a new pod with the SAME name, mounts the SAME PVC, and your
+  # data is intact. This is why StatefulSet is the right choice for stateful
+  # workloads.
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          # ReadWriteOnce = exactly one node may mount this volume r/w at
+          # a time. Fine for a single-replica DB. ReadWriteMany would let
+          # multiple pods share, but that's almost never what you want for
+          # a database.
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 1Gi

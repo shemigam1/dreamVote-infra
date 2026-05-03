@@ -1,0 +1,37 @@
+# Dependencies and build output - both are recreated inside the Docker build
+# stage. Including the host's node_modules would slow the build and risk
+# baking platform-specific binaries (e.g. macOS arm64 builds of esbuild)
+# into a Linux image.
+node_modules/
+dist/
+
+# Vite cache
+.vite/
+
+# Local env files - never bake secrets or env-specific URLs into images.
+# Runtime config is injected via the entrypoint script.
+.env
+.env.*
+!.env.example
+
+# IDE and OS metadata
+.idea/
+.vscode/
+*.iml
+.DS_Store
+
+# Git history - the image doesn't need it.
+.git/
+.gitignore
+
+# Docker assets - the Dockerfile is read by the docker build directly,
+# but doesn't need to live inside the image.
+Dockerfile
+.dockerignore
+
+# Logs and misc
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*

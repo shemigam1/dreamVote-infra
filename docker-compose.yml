@@ -1,0 +1,78 @@
+# Repo-root compose file. Spins up the full stack:
+#   - mongo:   MongoDB 7, with a named volume for data persistence
+#   - server:  Spring Boot API, built from ./server
+#   - ui:      React SPA served by nginx, built from ./ui
+#
+# Compose creates a default bridge network for these services automatically.
+# Service names (mongo, server, ui) are DNS-resolvable inside that network -
+# which is why the API reaches Mongo at hostname "mongo" and nginx reaches
+# the API at hostname "server" with no further config.
+
+services:
+  mongo:
+    image: mongo:7
+    container_name: dreamvote-mongo
+    # Exposing 27017 to the host is useful for learning - you can connect
+    # MongoDB Compass or mongosh from your laptop. In production, NEVER do
+    # this; the DB should only be reachable inside the cluster network.
+    ports:
+      - "27017:27017"
+    volumes:
+      # Named volume = data survives `docker compose down`. Wipe explicitly
+      # with `docker compose down -v` if you want a clean DB.
+      - mongo-data:/data/db
+    healthcheck:
+      # mongosh ships with mongo:5.0+ images. adminCommand('ping') returns
+      # {ok: 1} once the server is accepting connections.
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      # Grace period during initial startup; failed checks here don't count
+      # toward the retries limit.
+      start_period: 10s
+    restart: unless-stopped
+
+  server:
+    build:
+      # Build context is the server/ directory. Dockerfile path is implicit
+      # (server/Dockerfile).
+      context: ./server
+    container_name: dreamvote-server
+    ports:
+      - "8080:8080"
+    environment:
+      # The image already bakes in SPRING_PROFILES_ACTIVE=docker, so we only
+      # need to override the Mongo URI here. Inside the compose network,
+      # "mongo" resolves to the mongo container.
+      SPRING_MONGODB_URI: mongodb://mongo:27017/dreamVote
+    depends_on:
+      mongo:
+        # service_healthy waits for the mongo healthcheck to pass before
+        # starting this container. Without this, the API would race Mongo
+        # on startup and might fail before Mongo is ready.
+        condition: service_healthy
+
+  ui:
+    build:
+      context: ./ui
+    container_name: dreamvote-ui
+    # Host:container. 5173 matches Vite's dev-server port so the URL is the
+    # same whether you're running `pnpm dev` or `docker compose`. Container
+    # listens on 8080 because nginx-unprivileged can't bind <1024.
+    ports:
+      - "5173:8080"
+    # No `environment:` block needed - VITE_APP_BASE_URL defaults to "/api"
+    # in the entrypoint script, which combined with the nginx /api/ proxy
+    # is exactly right for the compose setup. Override here if you need to.
+    depends_on:
+      server:
+        # Wait until the API is healthy before starting nginx. Without this,
+        # nginx would emerg-fail on startup if the "server" hostname couldn't
+        # resolve (the proxy_pass directive triggers DNS resolution at start).
+        condition: service_healthy
+
+volumes:
+  # Named at the top level so it persists independently of any one container
+  # restart. Docker stores it under /var/lib/docker/volumes on the host.
+  mongo-data:

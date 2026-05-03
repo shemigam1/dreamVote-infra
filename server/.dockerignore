@@ -1,0 +1,22 @@
+# Build output - we rebuild inside the Docker build stage, so the host's target/
+# directory is irrelevant and would otherwise inflate the build context.
+target/
+
+# IDE and OS metadata - never useful inside the image.
+.idea/
+*.iml
+.DS_Store
+
+# Git history - the image doesn't need it.
+.git/
+.gitignore
+
+# Local env files - never bake secrets into images. Env vars come in at runtime.
+.env
+.env.*
+
+# Docker assets - the Dockerfile itself is read by docker build directly,
+# but we don't need it (or sibling compose files) inside the image.
+Dockerfile
+.dockerignore
+docker-compose*.yml

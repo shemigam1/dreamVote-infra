@@ -1,0 +1,17 @@
+# Non-secret configuration for the ui Deployment.
+#
+# VITE_APP_BASE_URL is read by docker-entrypoint.sh inside the container at
+# startup, then sed-replaced into the bundled JS. "/api" tells the SPA to
+# call same-origin paths under /api/*, which the nginx in the same pod
+# proxies to the server Service.
+#
+# Same value as the compose default - and that's the whole point of the
+# runtime-config-injection pattern: one image, configured per environment
+# only via env vars from this ConfigMap.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ui-config
+  namespace: dreamvote
+data:
+  VITE_APP_BASE_URL: "/api"

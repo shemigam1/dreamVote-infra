@@ -1,0 +1,30 @@
+# Headless Service for Mongo.
+#
+# "Headless" = `clusterIP: None`. The Service has no virtual IP - DNS for
+# `mongo.dreamvote.svc.cluster.local` resolves directly to pod IPs.
+#
+# StatefulSets require a headless Service to give each pod a stable DNS
+# entry of the form <pod-name>.<service-name>, e.g. mongo-0.mongo. With a
+# single replica we don't actually use the per-pod hostname, but doing it
+# right now means scaling up later doesn't require swapping out the Service.
+#
+# Apps still connect to `mongo:27017` - DNS gives them a pod IP, and with
+# only one replica there's only one to choose from.
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongo
+  namespace: dreamvote
+  labels:
+    app.kubernetes.io/name: mongo
+    app.kubernetes.io/component: database
+    app.kubernetes.io/part-of: dreamvote
+spec:
+  clusterIP: None       # headless
+  selector:
+    # Matches the pod labels set by the StatefulSet.
+    app.kubernetes.io/name: mongo
+  ports:
+    - name: mongo
+      port: 27017
+      targetPort: 27017

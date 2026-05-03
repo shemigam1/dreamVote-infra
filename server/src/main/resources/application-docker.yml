@@ -1,0 +1,22 @@
+spring:
+  mongodb:
+    uri: ${SPRING_MONGODB_URI:mongodb://mongo:27017/dreamVote}
+
+server:
+  port: 8080
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health        # only health, nothing else
+  endpoint:
+    health:
+      probes:
+        enabled: true          # turns on /health/liveness and /health/readiness
+      show-details: never      # don't leak internals over HTTP
+  health:
+    livenessstate:
+      enabled: true            # required for the liveness probe to actually have state to report
+    readinessstate:
+      enabled: true            # ditto for readiness

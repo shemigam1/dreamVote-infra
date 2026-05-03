@@ -1,0 +1,50 @@
+# Ingress: the cluster's external entry point.
+#
+# An Ingress on its own is just a routing config object - it does nothing
+# until an Ingress Controller (a real running pod, e.g. ingress-nginx) reads
+# the rules and starts listening for traffic. Minikube provides ingress-nginx
+# via the `ingress` addon, which we'll enable in K9.
+#
+# Routing for this app is intentionally simple:
+#   1. All traffic goes to the ui Service.
+#   2. The nginx INSIDE the ui pod handles the /api/* -> server proxying.
+#
+# That second point is the design pattern: the UI image already does the
+# /api routing, so the Ingress doesn't need to know about it. Same image
+# works in compose, Minikube, and EKS - no per-environment routing logic.
+#
+# Alternative we DIDN'T pick: split /api at the Ingress (path: /api ->
+# server, path: / -> ui). Cleaner from a "K8s-native" perspective, but
+# requires the UI image to behave differently in compose vs K8s. Not worth
+# the divergence.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: dreamvote
+  namespace: dreamvote
+  labels:
+    app.kubernetes.io/name: dreamvote
+    app.kubernetes.io/part-of: dreamvote
+spec:
+  # Picks the ingress-nginx controller. If a cluster has multiple controllers
+  # (e.g. nginx + AWS ALB), this is how you pick which one handles the rules.
+  # The minikube ingress addon installs ingress-nginx with className "nginx".
+  ingressClassName: nginx
+
+  rules:
+    - host: dreamvote.local
+      http:
+        paths:
+          - path: /
+            # Prefix: this rule matches "/" and everything under it.
+            # Exact: would only match literally "/".
+            # ImplementationSpecific: controller-defined - avoid for portability.
+            pathType: Prefix
+            backend:
+              service:
+                name: ui
+                port:
+                  # Reference the named port on the ui Service. Same trick
+                  # as in server-service.yaml - if the port number changes
+                  # in one place, this stays valid.
+                  name: http

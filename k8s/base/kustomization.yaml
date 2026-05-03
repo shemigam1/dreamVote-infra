@@ -1,0 +1,46 @@
+# The Kustomize base: declares which YAML files are part of the app and
+# applies cross-cutting transforms.
+#
+# Build/preview without applying:
+#   kustomize build k8s/base
+#   kubectl kustomize k8s/base    # equivalent, ships with kubectl
+#
+# Apply (typically you'd apply an OVERLAY, not the base directly):
+#   kubectl apply -k k8s/base
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Sets the namespace on every resource that is namespace-scoped. Resources
+# already declaring `namespace: dreamvote` are unaffected (the values match).
+# Cluster-scoped resources (the Namespace itself) are not touched.
+namespace: dreamvote
+
+# Files Kustomize includes when building this kustomization. Listed in a
+# rough dependency order (foundation -> data -> server -> ui -> ingress)
+# but order doesn't actually affect the apply - kubectl handles dependencies.
+resources:
+  - namespace.yaml
+  - server-config.yaml
+  - ui-config.yaml
+  - server-secret.yaml
+  - mongo-service.yaml
+  - mongo-statefulset.yaml
+  - server-deployment.yaml
+  - server-service.yaml
+  - ui-deployment.yaml
+  - ui-service.yaml
+  - ingress.yaml
+
+# Adds common labels to every resource. `app.kubernetes.io/part-of` is the
+# standard recommended label for "this resource belongs to the dreamvote app."
+# Useful for cluster-wide queries like:
+#   kubectl get all -A -l app.kubernetes.io/part-of=dreamvote
+#
+# `includeSelectors: true` means the label is also added to selectors of
+# Deployments/StatefulSets/Services. Safe here because part-of is constant -
+# never use includeSelectors for labels that might change (selectors are
+# immutable on existing Deployments).
+labels:
+  - includeSelectors: true
+    pairs:
+      app.kubernetes.io/part-of: dreamvote

@@ -1,0 +1,33 @@
+# Minikube overlay.
+#
+# An overlay layers env-specific changes onto the base. For Minikube
+# specifically there's not much to change - the base is already tuned for
+# local development (small replica counts, IfNotPresent pull policy, no
+# TLS). This file mostly exists to demonstrate the pattern; future overlays
+# (staging, prod) will have more in them.
+#
+# Build/preview:
+#   kubectl kustomize k8s/overlays/minikube
+# Apply:
+#   kubectl apply -k k8s/overlays/minikube
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Reference the base. Path is relative to this file.
+resources:
+  - ../../base
+
+# Pin image tags for this environment. The base manifest already says
+# `image: dreamvote-server:dev`, so this is technically redundant - but
+# centralizing tags here means a future prod overlay can swap them out
+# in one place without touching base manifests:
+#
+#   images:
+#     - name: dreamvote-server
+#       newName: ghcr.io/your-org/dreamvote-server
+#       newTag: 1.2.3
+images:
+  - name: dreamvote-server
+    newTag: dev
+  - name: dreamvote-ui
+    newTag: dev

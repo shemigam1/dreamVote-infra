@@ -1,0 +1,23 @@
+# Non-secret configuration for the server Deployment. Loaded into the pod's
+# environment via `envFrom: configMapRef:` (see server-deployment.yaml), so
+# every key here becomes an env var with the same name.
+#
+# Why ConfigMap and not just hardcode in the Deployment?
+#   - Single source of truth: rotating a value means editing one resource.
+#   - Lets you `kubectl edit configmap server-config` for quick tweaks
+#     without re-applying the Deployment.
+#   - Mirrors how this would be split out from a Helm values file later.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: server-config
+  namespace: dreamvote
+data:
+  # Activates application-docker.yml inside the JAR. The Dockerfile already
+  # bakes this in via ENV; declaring it here too documents the contract and
+  # gives you a single place to change it for cluster deployments.
+  SPRING_PROFILES_ACTIVE: "docker"
+
+  # Mongo connection string. "mongo" resolves to the headless Service in
+  # the same namespace. Same hostname pattern as compose - that's deliberate.
+  SPRING_MONGODB_URI: "mongodb://mongo:27017/dreamVote"
