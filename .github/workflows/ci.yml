@@ -83,7 +83,11 @@ jobs:
 
       - name: Run tests
         working-directory: server
-        run: ./mvnw -B -e -ntp verify
+        # Using system `mvn` (pre-installed on ubuntu-latest runners) rather
+        # than ./mvnw because the repo doesn't ship a Maven wrapper. Same
+        # pattern as the Dockerfile, which uses the maven:3.9-eclipse-temurin-25
+        # base image's `mvn`.
+        run: mvn -B -e -ntp verify
 
   # ----- Server image ---------------------------------------------------------
   build-server:
