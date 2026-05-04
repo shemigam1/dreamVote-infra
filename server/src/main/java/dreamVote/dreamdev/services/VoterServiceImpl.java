@@ -25,7 +25,6 @@ public class VoterServiceImpl implements VoterService{
             throw new DuplicateVoterException("Voter with email " +
                 voterRegisterationRequest.getEmail() + " already exists");
         Voter voter = map(voterRegisterationRequest);
-        voter.setLoggedIn(true);
         Voter savedVoter =  voterRepository.save(voter);
         return map(savedVoter);
     }
